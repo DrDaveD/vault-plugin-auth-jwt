@@ -217,7 +217,6 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 
 	var rawToken string
 	var oauth2Token *oauth2.Token
-	oauth2Metadata := make(map[string]string)
 
 	code := d.Get("code").(string)
 	if code == noCode {
@@ -241,14 +240,6 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		if !ok {
 			return logical.ErrorResponse(errTokenVerification + " No id_token found in response."), nil
 		}
-
-		for _, mdname := range role.Oauth2Metadata {
-			md, ok := oauth2Token.Extra(mdname).(string)
-			if !ok {
-				return logical.ErrorResponse(errTokenVerification + " No " + mdname + " found in response."), nil
-			}
-			oauth2Metadata[mdname] = md
-		}
 	}
 
 	if role.VerboseOIDCLogging {
@@ -266,6 +257,8 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 	}
 	delete(allClaims, "nonce")
 
+	oauth2Metadata := make(map[string]string)
+
 	// If we have a token, attempt to fetch information from the /userinfo endpoint
 	// and merge it with the existing claims data. A failure to fetch additional information
 	// from this endpoint will not invalidate the authorization flow.
@@ -278,6 +271,15 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 				logFunc = b.Logger().Info
 			}
 			logFunc("error reading /userinfo endpoint", "error", err)
+		}
+
+		// Also fetch any requested extra oauth2 metadata
+		for _, mdname := range role.Oauth2Metadata {
+			md, ok := oauth2Token.Extra(mdname).(string)
+			if !ok {
+				return logical.ErrorResponse(errTokenVerification + " No " + mdname + " found in response."), nil
+			}
+			oauth2Metadata[mdname] = md
 		}
 	}
 
