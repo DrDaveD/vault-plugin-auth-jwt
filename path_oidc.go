@@ -64,6 +64,9 @@ func pathOIDC(b *jwtAuthBackend) []*framework.Path {
 				"client_nonce": {
 					Type: framework.TypeString,
 				},
+				"error_description": {
+					Type: framework.TypeString,
+				},
 			},
 
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -154,6 +157,19 @@ func (b *jwtAuthBackend) pathCallbackPost(ctx context.Context, req *logical.Requ
 	return resp, nil
 }
 
+func (b *jwtAuthBackend) loginFailedResponse(useHttp bool, msg string) (*logical.Response) {
+	if !useHttp {
+		return logical.ErrorResponse(errLoginFailed + " " + msg)
+	}
+	return &logical.Response{
+		Data: map[string]interface{}{
+			logical.HTTPContentType: "text/html",
+			logical.HTTPStatusCode:  http.StatusBadRequest,
+			logical.HTTPRawBody:     []byte(errorHTML(errLoginFailed, msg)),
+		},
+	}
+}
+
 func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
 	config, err := b.config(ctx, req.Storage)
 	if err != nil {
@@ -170,14 +186,6 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		return logical.ErrorResponse(errLoginFailed + " Expired or missing OAuth state."), nil
 	}
 
-	clientNonce := d.Get("client_nonce").(string)
-
-	// If a client_nonce was provided at the start of the auth process as part of the auth_url
-	// request, require that it is present and matching during the callback phase.
-	if state.clientNonce != "" && clientNonce != state.clientNonce {
-		return logical.ErrorResponse("invalid client_nonce"), nil
-	}
-
 	roleName := state.rolename
 	role, err := b.role(ctx, req.Storage, roleName)
 	if err != nil {
@@ -185,6 +193,22 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 	}
 	if role == nil {
 		return logical.ErrorResponse(errLoginFailed + " Role could not be found"), nil
+	}
+
+	useHttp := role.DirectCallback
+
+	errorDescription := d.Get("error_description").(string)
+	if errorDescription != "" {
+		return b.loginFailedResponse(useHttp, errorDescription), nil
+	}
+
+	clientNonce := d.Get("client_nonce").(string)
+
+	// If a client_nonce was provided at the start of the auth process as part of the auth_url
+	// request, require that it is present and matching during the callback phase
+	// unless using the DirectCallback mode (when we instead check in poll_wait).
+	if state.clientNonce != "" && clientNonce != state.clientNonce && !role.DirectCallback {
+		return logical.ErrorResponse("invalid client_nonce"), nil
 	}
 
 	if len(role.TokenBoundCIDRs) > 0 {
@@ -225,20 +249,20 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 
 	if code == "" {
 		if state.idToken == "" {
-			return logical.ErrorResponse(errLoginFailed + " No code or id_token received."), nil
+			return b.loginFailedResponse(useHttp, "No code or id_token received."), nil
 		}
 		rawToken = state.idToken
 	} else {
 		oauth2Token, err = oauth2Config.Exchange(oidcCtx, code)
 		if err != nil {
-			return logical.ErrorResponse(errLoginFailed+" Error exchanging oidc code: %q.", err.Error()), nil
+			return b.loginFailedResponse(useHttp, fmt.Sprintf("Error exchanging oidc code: %q.", err.Error())), nil
 		}
 
 		// Extract the ID Token from OAuth2 token.
 		var ok bool
 		rawToken, ok = oauth2Token.Extra("id_token").(string)
 		if !ok {
-			return logical.ErrorResponse(errTokenVerification + " No id_token found in response."), nil
+			return b.loginFailedResponse(useHttp, "No id_token found in response."), nil
 		}
 	}
 
@@ -249,11 +273,11 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 	// Parse and verify ID Token payload.
 	allClaims, err := b.verifyOIDCToken(ctx, config, role, rawToken)
 	if err != nil {
-		return logical.ErrorResponse("%s %s", errTokenVerification, err.Error()), nil
+		return b.loginFailedResponse(useHttp, fmt.Sprintf("%s %s", errTokenVerification, err.Error())), nil
 	}
 
 	if allClaims["nonce"] != state.nonce {
-		return logical.ErrorResponse(errTokenVerification + " Invalid ID token nonce."), nil
+		return b.loginFailedResponse(useHttp, "Invalid ID token nonce."), nil
 	}
 	delete(allClaims, "nonce")
 
@@ -281,12 +305,12 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 	}
 
 	if err := validateBoundClaims(b.Logger(), role.BoundClaimsType, role.BoundClaims, allClaims); err != nil {
-		return logical.ErrorResponse("error validating claims: %s", err.Error()), nil
+		return b.loginFailedResponse(useHttp, fmt.Sprintf("error validating claims: %s", err.Error())), nil
 	}
 
 	alias, groupAliases, err := b.createIdentity(allClaims, role)
 	if err != nil {
-		return logical.ErrorResponse(err.Error()), nil
+		return b.loginFailedResponse(useHttp, err.Error()), nil
 	}
 
 	tokenMetadata := map[string]string{"role": roleName}
@@ -315,8 +339,15 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 
 	role.PopulateTokenAuth(auth)
 
-	resp := &logical.Response{
-		Auth: auth,
+	resp := &logical.Response{}
+	if useHttp {
+		resp.Data = map[string]interface{} {
+			logical.HTTPContentType: "text/html",
+			logical.HTTPStatusCode:  http.StatusOK,
+			logical.HTTPRawBody:     []byte(successHTML),
+		}
+	} else {
+		resp.Auth = auth
 	}
 
 	return resp, nil
