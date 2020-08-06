@@ -138,6 +138,10 @@ Defaults to 60 (1 minute) if set to 0 and can be disabled if set to -1.`,
 				Type:        framework.TypeCommaStringSlice,
 				Description: `Comma-separated list of allowed values for redirect_uri`,
 			},
+			"direct_callback": {
+				Type:        framework.TypeBool,
+				Description: `OIDC callback is direct from Authorization Server to vault`,
+			},
 			"verbose_oidc_logging": {
 				Type: framework.TypeBool,
 				Description: `Log received OIDC tokens and claims when debug-level logging is active. 
@@ -201,6 +205,7 @@ type jwtRole struct {
 	GroupsClaim         string                 `json:"groups_claim"`
 	OIDCScopes          []string               `json:"oidc_scopes"`
 	AllowedRedirectURIs []string               `json:"allowed_redirect_uris"`
+	DirectCallback      bool                   `json:"direct_callback"`
 	VerboseOIDCLogging  bool                   `json:"verbose_oidc_logging"`
 
 	// Deprecated by TokenParams
@@ -306,6 +311,7 @@ func (b *jwtAuthBackend) pathRoleRead(ctx context.Context, req *logical.Request,
 		"user_claim":            role.UserClaim,
 		"groups_claim":          role.GroupsClaim,
 		"allowed_redirect_uris": role.AllowedRedirectURIs,
+		"direct_callback":       role.DirectCallback,
 		"oidc_scopes":           role.OIDCScopes,
 		"verbose_oidc_logging":  role.VerboseOIDCLogging,
 	}
@@ -506,6 +512,10 @@ func (b *jwtAuthBackend) pathRoleCreateUpdate(ctx context.Context, req *logical.
 
 	if allowedRedirectURIs, ok := data.GetOk("allowed_redirect_uris"); ok {
 		role.AllowedRedirectURIs = allowedRedirectURIs.([]string)
+	}
+
+	if directCallbackRaw, ok := data.GetOk("direct_callback"); ok {
+		role.DirectCallback = directCallbackRaw.(bool)
 	}
 
 	if role.RoleType == "oidc" && len(role.AllowedRedirectURIs) == 0 {
