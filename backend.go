@@ -55,6 +55,7 @@ func backend() *jwtAuthBackend {
 				"login",
 				"oidc/auth_url",
 				"oidc/callback",
+				"oidc/poll",
 
 				// Uncomment to mount simple UI handler for local development
 				// "ui",
