@@ -6,12 +6,14 @@ import (
 	"io/ioutil"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -22,6 +24,7 @@ import (
 const defaultMount = "oidc"
 const defaultListenAddress = "localhost"
 const defaultPort = "8250"
+const defaultCallbackMode = "cli"
 const defaultCallbackHost = "localhost"
 const defaultCallbackMethod = "http"
 
@@ -57,41 +60,112 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 		port = defaultPort
 	}
 
+	var vaultURL *url.URL
+	callbackMode, ok := m["callbackmode"]
+	if !ok {
+		callbackMode = defaultCallbackMode
+	} else if callbackMode == "direct" {
+		vaultAddr := os.Getenv("VAULT_ADDR")
+		if vaultAddr != "" {
+			vaultURL, _ = url.Parse(vaultAddr)
+		}
+	}
+
 	callbackHost, ok := m["callbackhost"]
 	if !ok {
-		callbackHost = defaultCallbackHost
+		if vaultURL != nil {
+			callbackHost = vaultURL.Hostname()
+		} else {
+			callbackHost = defaultCallbackHost
+		}
 	}
 
 	callbackMethod, ok := m["callbackmethod"]
 	if !ok {
-		callbackMethod = defaultCallbackMethod
+		if vaultURL != nil {
+			callbackMethod = vaultURL.Scheme
+		} else {
+			callbackMethod = defaultCallbackMethod
+		}
 	}
 
 	callbackPort, ok := m["callbackport"]
 	if !ok {
-		callbackPort = port
+		if vaultURL != nil {
+			callbackPort = vaultURL.Port() + "/v1/auth/" + mount
+		} else {
+			callbackPort = port
+		}
 	}
 
 	role := m["role"]
 
-	authURL, clientNonce, err := fetchAuthURL(c, role, mount, callbackPort, callbackMethod, callbackHost)
+	authURL, clientNonce, secret, err := fetchAuthURL(c, role, mount, callbackPort, callbackMethod, callbackHost)
 	if err != nil {
 		return nil, err
 	}
 
-	// Set up callback handler
-	http.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
+	var pollInterval string
+	var interval int
+	var state string
+	var listener net.Listener
 
-	listener, err := net.Listen("tcp", listenAddress+":"+port)
-	if err != nil {
-		return nil, err
+	if secret != nil {
+		pollInterval, _ = secret.Data["poll_interval"].(string)
+		state, _ = secret.Data["state"].(string)
 	}
-	defer listener.Close()
+	if callbackMode == "direct" {
+		if state == "" {
+			return nil, errors.New("no state returned in direct callback mode")
+		}
+		if pollInterval == "" {
+			return nil, errors.New("no poll_interval returned in direct callback mode")
+		}
+		interval, err = strconv.Atoi(pollInterval)
+		if err != nil {
+			return nil, errors.New("cannot convert poll_interval " + pollInterval + " to integer")
+		}
+	} else {
+		if state != "" {
+			return nil, errors.New("state returned in cli callback mode, try direct")
+		}
+		if pollInterval != "" {
+			return nil, errors.New("poll_interval returned in cli callback mode")
+		}
+		// Set up callback handler
+		http.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
+
+		listener, err := net.Listen("tcp", listenAddress+":"+port)
+		if err != nil {
+			return nil, err
+		}
+		defer listener.Close()
+	}
 
 	// Open the default browser to the callback URL.
 	fmt.Fprintf(os.Stderr, "Complete the login via your OIDC provider. Launching browser to:\n\n    %s\n\n\n", authURL)
 	if err := openURL(authURL); err != nil {
 		fmt.Fprintf(os.Stderr, "Error attempting to automatically open browser: '%s'.\nPlease visit the authorization URL manually.", err)
+	}
+
+	if callbackMode == "direct" {
+		data := map[string][]string{
+			"state":        {state},
+			"client_nonce": {clientNonce},
+		}
+		pollUrl := fmt.Sprintf("auth/%s/oidc/poll", mount)
+		for {
+			time.Sleep(time.Duration(interval) * time.Second)
+
+			secret, err := c.Logical().ReadWithData(pollUrl, data)
+			if err == nil {
+				return secret, nil
+			}
+			if !strings.HasSuffix(err.Error(), "authorization_pending") {
+				return nil, err
+			}
+			// authorization is pending, try again
+		}
 	}
 
 	// Start local server
@@ -160,12 +234,12 @@ func callbackHandler(c *api.Client, mount string, clientNonce string, doneCh cha
 	}
 }
 
-func fetchAuthURL(c *api.Client, role, mount, callbackport string, callbackMethod string, callbackHost string) (string, string, error) {
+func fetchAuthURL(c *api.Client, role, mount, callbackport string, callbackMethod string, callbackHost string) (string, string, *api.Secret, error) {
 	var authURL string
 
 	clientNonce, err := base62.Random(20)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	data := map[string]interface{}{
@@ -176,7 +250,7 @@ func fetchAuthURL(c *api.Client, role, mount, callbackport string, callbackMetho
 
 	secret, err := c.Logical().Write(fmt.Sprintf("auth/%s/oidc/auth_url", mount), data)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 
 	if secret != nil {
@@ -184,10 +258,10 @@ func fetchAuthURL(c *api.Client, role, mount, callbackport string, callbackMetho
 	}
 
 	if authURL == "" {
-		return "", "", fmt.Errorf("Unable to authorize role %q. Check Vault logs for more information.", role)
+		return "", "", nil, fmt.Errorf("Unable to authorize role %q. Check Vault logs for more information.", role)
 	}
 
-	return authURL, clientNonce, nil
+	return authURL, clientNonce, secret, nil
 }
 
 // isWSL tests if the binary is being run in Windows Subsystem for Linux
@@ -274,28 +348,38 @@ Usage: vault login -method=oidc [CONFIG K=V...]
 
           https://accounts.google.com/o/oauth2/v2/...
 
-  The default browser will be opened for the user to complete the login. Alternatively,
-  the user may visit the provided URL directly.
+  The default browser will be opened for the user to complete the login. 
+  Alternatively, the user may visit the provided URL directly.
 
 Configuration:
 
   role=<string>
-      Vault role of type "OIDC" to use for authentication.
+    Vault role of type "OIDC" to use for authentication.
+
+  callbackmode=<string>
+    Mode of callback: "direct" for direct connection to Vault or "cli" for
+    connection to command line client (default: cli).
 
   listenaddress=<string>
-    Optional address to bind the OIDC callback listener to (default: localhost).
+    Optional address to bind the OIDC callback listener to in cli callback
+    mode (default: localhost).
 
   port=<string>
-    Optional localhost port to use for OIDC callback (default: 8250).
+    Optional localhost port to use for OIDC callback in cli callback mode
+    (default: 8250).
 
   callbackmethod=<string>
-    Optional method to to use in OIDC redirect_uri (default: http).
+    Optional method to use in OIDC redirect_uri (default: the method from
+    $VAULT_ADDR in direct callback mode, else http)
 
   callbackhost=<string>
-    Optional callback host address to use in OIDC redirect_uri (default: localhost).
+    Optional callback host address to use in OIDC redirect_uri (default:
+    the host from $VAULT_ADDR in direct callback mode, else localhost).
 
   callbackport=<string>
-      Optional port to to use in OIDC redirect_uri (default: the value set for port).
+    Optional port to use in OIDC redirect_uri (default: the value set for
+    port in cli callback mode, else the port from $VAULT_ADDR with an added
+    /v1/auth/<path> where <path> is from the login -path option).
 `
 
 	return strings.TrimSpace(help)
