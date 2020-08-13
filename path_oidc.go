@@ -222,7 +222,10 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		return logical.ErrorResponse(errLoginFailed + " Role could not be found"), nil
 	}
 
-	useHttp := role.DirectCallback
+	useHttp := false
+	if role.CallbackMode == callbackModeDirect {
+		useHttp = true
+	}
 	if !useHttp {
 		// state is only accessed once when not using direct callback
 		b.deleteState(stateID)
@@ -237,8 +240,8 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 
 	// If a client_nonce was provided at the start of the auth process as part of the auth_url
 	// request, require that it is present and matching during the callback phase
-	// unless using the DirectCallback mode (when we instead check in poll).
-	if state.clientNonce != "" && clientNonce != state.clientNonce && !role.DirectCallback {
+	// unless using the direct callback mode (when we instead check in poll).
+	if state.clientNonce != "" && clientNonce != state.clientNonce && !useHttp {
 		return logical.ErrorResponse("invalid client_nonce"), nil
 	}
 
@@ -527,7 +530,7 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 		fmt.Sprintf("response_type=%s", url.QueryEscape(rt)), 1)
 
 	resp.Data["auth_url"] = urlStr
-	if role.DirectCallback {
+	if role.CallbackMode == callbackModeDirect {
 		resp.Data["state"] = stateID
 		resp.Data["poll_interval"] = "5"
 	}
