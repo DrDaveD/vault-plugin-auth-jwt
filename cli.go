@@ -24,7 +24,7 @@ import (
 const defaultMount = "oidc"
 const defaultListenAddress = "localhost"
 const defaultPort = "8250"
-const defaultCallbackMode = "cli"
+const defaultCallbackMode = "client"
 const defaultCallbackHost = "localhost"
 const defaultCallbackMethod = "http"
 
@@ -357,8 +357,8 @@ Configuration:
     Vault role of type "OIDC" to use for authentication.
 
   callbackmode=<string>
-    Mode of callback: "direct" for direct connection to Vault or "cli" for
-    connection to command line client (default: cli).
+    Mode of callback: "direct" for direct connection to Vault or "client"
+    for connection to command line client (default: client).
 
   listenaddress=<string>
     Optional address to bind the OIDC callback listener to in cli callback
