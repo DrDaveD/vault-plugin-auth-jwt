@@ -361,11 +361,11 @@ Configuration:
     for connection to command line client (default: client).
 
   listenaddress=<string>
-    Optional address to bind the OIDC callback listener to in cli callback
+    Optional address to bind the OIDC callback listener to in client callback
     mode (default: localhost).
 
   port=<string>
-    Optional localhost port to use for OIDC callback in cli callback mode
+    Optional localhost port to use for OIDC callback in client callback mode
     (default: 8250).
 
   callbackmethod=<string>
@@ -378,8 +378,8 @@ Configuration:
 
   callbackport=<string>
     Optional port to use in OIDC redirect_uri (default: the value set for
-    port in cli callback mode, else the port from $VAULT_ADDR with an added
-    /v1/auth/<path> where <path> is from the login -path option).
+    port in client callback mode, else the port from $VAULT_ADDR with an
+    added /v1/auth/<path> where <path> is from the login -path option).
 `
 
 	return strings.TrimSpace(help)
