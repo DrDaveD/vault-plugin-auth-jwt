@@ -148,8 +148,8 @@ Defaults to 60 (1 minute) if set to 0 and can be disabled if set to -1.`,
 			},
 			"poll_interval": {
 				Type:        framework.TypeInt,
-				Description: `poll interval in seconds for device and direct flows, default '5'`,
-				// don't set Default here because server may also set a default
+				Description: `poll interval in seconds for device and direct flows, default value from Authorization Server for device flow, or '5'`,
+				// don't set Default here because server may set a default
 			},
 			"verbose_oidc_logging": {
 				Type: framework.TypeBool,
