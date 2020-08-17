@@ -328,6 +328,8 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 		delete(allClaims, "nonce")
 	}
 
+	oauth2Metadata := make(map[string]string)
+
 	// If we have a token, attempt to fetch information from the /userinfo endpoint
 	// and merge it with the existing claims data. A failure to fetch additional information
 	// from this endpoint will not invalidate the authorization flow.
@@ -340,6 +342,15 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 				logFunc = b.Logger().Info
 			}
 			logFunc("error reading /userinfo endpoint", "error", err)
+		}
+
+		// Also fetch any requested extra oauth2 metadata
+		for _, mdname := range role.Oauth2Metadata {
+			md, ok := oauth2Token.Extra(mdname).(string)
+			if !ok {
+				return logical.ErrorResponse(errTokenVerification + " No " + mdname + " found in response."), nil
+			}
+			oauth2Metadata[mdname] = md
 		}
 	}
 
@@ -363,6 +374,9 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 	tokenMetadata := map[string]string{"role": roleName}
 	for k, v := range alias.Metadata {
 		tokenMetadata[k] = v
+	}
+	for k, v := range oauth2Metadata {
+		tokenMetadata["oauth2_" + k] = v
 	}
 
 	auth := &logical.Auth{
