@@ -127,10 +127,10 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 		}
 	} else {
 		if state != "" {
-			return nil, errors.New("state returned in cli callback mode, try direct")
+			return nil, errors.New("state returned in client callback mode, try direct")
 		}
 		if pollInterval != "" {
-			return nil, errors.New("poll_interval returned in cli callback mode")
+			return nil, errors.New("poll_interval returned in client callback mode")
 		}
 		// Set up callback handler
 		http.HandleFunc("/oidc/callback", callbackHandler(c, mount, clientNonce, doneCh))
