@@ -419,14 +419,6 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 
 // second half of the client API for direct and device callback modes
 func (b *jwtAuthBackend) pathPoll(ctx context.Context, req *logical.Request, d *framework.FieldData) (*logical.Response, error) {
-	config, err := b.config(ctx, req.Storage)
-	if err != nil {
-		return nil, err
-	}
-	if config == nil {
-		return logical.ErrorResponse(errLoginFailed + " Could not load configuration"), nil
-	}
-
 	stateID := d.Get("state").(string)
 	state := b.getState(stateID)
 	if state == nil {
@@ -456,6 +448,14 @@ func (b *jwtAuthBackend) pathPoll(ctx context.Context, req *logical.Request, d *
 	}
 
 	if role.CallbackMode == callbackModeDevice {
+		config, err := b.config(ctx, req.Storage)
+		if err != nil {
+			return nil, err
+		}
+		if config == nil {
+			return logical.ErrorResponse(errLoginFailed + " Could not load configuration"), nil
+		}
+
 		caCtx, err := b.createCAContext(ctx, config.OIDCDiscoveryCAPEM)
 		if err != nil {
 			return nil, err
