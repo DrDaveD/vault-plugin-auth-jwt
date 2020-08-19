@@ -32,8 +32,8 @@ const (
 	noCode = "no_code"
 )
 
-// oidcState is created when an authURL is requested while not using the
-//  device flow. The state identifier is passed throughout the OAuth process.
+// oidcState is created when an authURL is requested. The state identifier is
+// passed throughout the OAuth process.
 type oidcState struct {
 	rolename       string
 	nonce          string
