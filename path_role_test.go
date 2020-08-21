@@ -85,6 +85,7 @@ func TestPath_Create(t *testing.T) {
 			NumUses:             12,
 			BoundCIDRs:          []*sockaddr.SockAddrMarshaler{{SockAddr: expectedSockAddr}},
 			AllowedRedirectURIs: []string(nil),
+			CallbackMode:        "client",
 		}
 
 		req := &logical.Request{
@@ -557,6 +558,7 @@ func TestPath_OIDCCreate(t *testing.T) {
 				"bar": "baz",
 			},
 			AllowedRedirectURIs: []string{"https://example.com", "http://localhost:8250"},
+			CallbackMode:    "client",
 			ClaimMappings: map[string]string{
 				"foo": "a",
 				"bar": "b",
@@ -763,6 +765,7 @@ func TestPath_Read(t *testing.T) {
 		"bound_subject":           "testsub",
 		"bound_audiences":         []string{"vault"},
 		"allowed_redirect_uris":   []string{"http://127.0.0.1"},
+		"callback_mode":           "client",
 		"oidc_scopes":             []string{"email", "profile"},
 		"user_claim":              "user",
 		"groups_claim":            "groups",
