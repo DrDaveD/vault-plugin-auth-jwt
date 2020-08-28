@@ -212,8 +212,18 @@ func TestOIDC_Callback(t *testing.T) {
 	t.Run("successful login", func(t *testing.T) {
 
 		// run test with and without bound_cidrs configured
-		for _, useBoundCIDRs := range []bool{false, true} {
-			b, storage, s := getBackendAndServer(t, useBoundCIDRs)
+		//   and with and without direct callback mode
+		for i := 1; i <= 3; i++ {
+			var useBoundCIDRs bool
+			var callbackMode string
+
+			if i == 2 {
+				useBoundCIDRs = true
+			} else if i == 3 {
+				callbackMode = "direct"
+			}
+
+			b, storage, s := getBackendAndServer(t, useBoundCIDRs, callbackMode)
 			defer s.server.Close()
 
 			// get auth_url
@@ -251,8 +261,8 @@ func TestOIDC_Callback(t *testing.T) {
 				Path:      "oidc/callback",
 				Storage:   storage,
 				Data: map[string]interface{}{
-					"state": state,
-					"code":  "abc",
+					"state":       state,
+					"code":        "abc",
 				},
 				Connection: &logical.Connection{
 					RemoteAddr: "127.0.0.42",
@@ -262,6 +272,21 @@ func TestOIDC_Callback(t *testing.T) {
 			resp, err = b.HandleRequest(context.Background(), req)
 			if err != nil {
 				t.Fatal(err)
+			}
+
+			if callbackMode == "direct" {
+				req = &logical.Request{
+					Operation: logical.ReadOperation,
+					Path:      "oidc/poll",
+					Storage:   storage,
+					Data: map[string]interface{}{
+						"state": state,
+					},
+				}
+				resp, err = b.HandleRequest(context.Background(), req)
+				if err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			expected := &logical.Auth{
@@ -309,7 +334,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("failed login - bad nonce", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		// get auth_url
@@ -361,7 +386,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("failed login - bound claim mismatch", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		// get auth_url
@@ -414,7 +439,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("missing state", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		req := &logical.Request{
@@ -433,7 +458,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("unknown state", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		req := &logical.Request{
@@ -455,7 +480,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("valid state, missing code", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		// get auth_url
@@ -497,7 +522,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("failed code exchange", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		// get auth_url
@@ -543,7 +568,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("no response from provider", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 
 		// get auth_url
 		data := map[string]interface{}{
@@ -589,7 +614,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("test bad address", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, true)
+		b, storage, s := getBackendAndServer(t, true, "")
 		defer s.server.Close()
 
 		s.code = "abc"
@@ -634,7 +659,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("test invalid client_id", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		s.code = "abc"
@@ -687,7 +712,7 @@ func TestOIDC_Callback(t *testing.T) {
 	})
 
 	t.Run("client_nonce", func(t *testing.T) {
-		b, storage, s := getBackendAndServer(t, false)
+		b, storage, s := getBackendAndServer(t, false, "")
 		defer s.server.Close()
 
 		// General behavior is that if a client_nonce is provided during the authURL phase
@@ -943,7 +968,7 @@ func TestOIDC_ValidRedirect(t *testing.T) {
 	}
 }
 
-func getBackendAndServer(t *testing.T, boundCIDRs bool) (logical.Backend, logical.Storage, *oidcProvider) {
+func getBackendAndServer(t *testing.T, boundCIDRs bool, callbackMode string) (logical.Backend, logical.Storage, *oidcProvider) {
 	b, storage := getBackend(t)
 	s := newOIDCProvider(t)
 	s.clientID = "abc"
@@ -1000,6 +1025,10 @@ func getBackendAndServer(t *testing.T, boundCIDRs bool) (logical.Backend, logica
 
 	if boundCIDRs {
 		data["bound_cidrs"] = "127.0.0.42"
+	}
+
+	if callbackMode != "" {
+		data["callback_mode"] = callbackMode
 	}
 
 	req = &logical.Request{
