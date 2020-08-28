@@ -154,15 +154,15 @@ func (h *CLIHandler) Auth(c *api.Client, m map[string]string) (*api.Secret, erro
 	}
 
 	if callbackMode != "client" {
-		data := map[string][]string{
-			"state":        {state},
-			"client_nonce": {clientNonce},
+		data := map[string]interface{}{
+			"state":        state,
+			"client_nonce": clientNonce,
 		}
 		pollUrl := fmt.Sprintf("auth/%s/oidc/poll", mount)
 		for {
 			time.Sleep(time.Duration(interval) * time.Second)
 
-			secret, err := c.Logical().ReadWithData(pollUrl, data)
+			secret, err := c.Logical().Write(pollUrl, data)
 			if err == nil {
 				return secret, nil
 			}

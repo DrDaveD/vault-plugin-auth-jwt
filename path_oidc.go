@@ -99,7 +99,7 @@ func pathOIDC(b *jwtAuthBackend) []*framework.Path {
 				},
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
-				logical.ReadOperation: &framework.PathOperation{
+				logical.UpdateOperation: &framework.PathOperation{
 					Callback: b.pathPoll,
 					Summary:  "Poll endpoint to complete an OIDC login.",
 
@@ -121,7 +121,7 @@ func pathOIDC(b *jwtAuthBackend) []*framework.Path {
 				},
 				"client_nonce": {
 					Type:        framework.TypeString,
-					Description: "Optional client-provided nonce that must match during callback, if present.",
+					Description: "Client-provided nonce that must match during callback, if present. Required only in direct callback mode.",
 				},
 			},
 			Operations: map[logical.Operation]framework.OperationHandler{
@@ -207,7 +207,7 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 	stateID := d.Get("state").(string)
 
 	state := b.getState(stateID)
-	if state == nil {
+	if state == nil || state.auth != nil {
 		return logical.ErrorResponse(errLoginFailed + " Expired or missing OAuth state."), nil
 	}
 
@@ -563,7 +563,6 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 	}
 
 	redirectURI := d.Get("redirect_uri").(string)
-	clientNonce := d.Get("client_nonce").(string)
 
 	role, err := b.role(ctx, req.Storage, roleName)
 	if err != nil {
@@ -571,6 +570,11 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 	}
 	if role == nil {
 		return logical.ErrorResponse("role %q could not be found", roleName), nil
+	}
+
+	clientNonce := d.Get("client_nonce").(string)
+	if clientNonce == "" && role.CallbackMode != callbackModeClient {
+		return logical.ErrorResponse("missing client_nonce"), nil
 	}
 
 	// "openid" is a required scope for OpenID Connect flows
