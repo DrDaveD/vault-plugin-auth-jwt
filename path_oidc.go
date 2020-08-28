@@ -561,6 +561,7 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 	clientNonce := d.Get("client_nonce").(string)
 	if clientNonce == "" && role.CallbackMode != callbackModeClient {
 		return logical.ErrorResponse("missing client_nonce"), nil
+	}
 
 	// "openid" is a required scope for OpenID Connect flows
 	scopes := append([]string{oidc.ScopeOpenID}, role.OIDCScopes...)
