@@ -476,6 +476,10 @@ func (b *jwtAuthBackend) pathPoll(ctx context.Context, req *logical.Request, d *
 			return nil, errwrap.Wrapf("error polling for device authorization: {{err}}", err)
 		}
 
+		if body[0] != '{' {
+			return nil, fmt.Errorf("issuer response while polling for token is not json: %v", string(body))
+		}
+
 		var tokenOrError struct {
 			*oauth2.Token
 			Error string `json:"error,omitempty"`
