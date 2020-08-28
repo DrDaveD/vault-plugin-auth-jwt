@@ -226,10 +226,13 @@ func TestOIDC_Callback(t *testing.T) {
 			b, storage, s := getBackendAndServer(t, useBoundCIDRs, callbackMode)
 			defer s.server.Close()
 
+			clientNonce := "456"
+
 			// get auth_url
 			data := map[string]interface{}{
 				"role":         "test",
 				"redirect_uri": "https://example.com",
+				"client_nonce": clientNonce,
 			}
 			req := &logical.Request{
 				Operation: logical.UpdateOperation,
@@ -261,8 +264,9 @@ func TestOIDC_Callback(t *testing.T) {
 				Path:      "oidc/callback",
 				Storage:   storage,
 				Data: map[string]interface{}{
-					"state":       state,
-					"code":        "abc",
+					"state":        state,
+					"code":         "abc",
+					"client_nonce": clientNonce,
 				},
 				Connection: &logical.Connection{
 					RemoteAddr: "127.0.0.42",
@@ -276,11 +280,12 @@ func TestOIDC_Callback(t *testing.T) {
 
 			if callbackMode == "direct" {
 				req = &logical.Request{
-					Operation: logical.ReadOperation,
+					Operation: logical.UpdateOperation,
 					Path:      "oidc/poll",
 					Storage:   storage,
 					Data: map[string]interface{}{
-						"state": state,
+						"state":        state,
+						"client_nonce": clientNonce,
 					},
 				}
 				resp, err = b.HandleRequest(context.Background(), req)
