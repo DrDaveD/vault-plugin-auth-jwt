@@ -614,10 +614,22 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 		return logical.ErrorResponse("missing redirect_uri"), nil
 	}
 
-	stateID, nonce, err := b.createState(roleName, redirectURI, clientNonce)
-	if err != nil {
-		logger.Warn("error generating OAuth state", "error", err)
-		return resp, nil
+	// If namespace will be passed around in state, and it has been provided as
+	// a redirectURI query parameter, remove it from redirectURI, and append it
+	// to the state (later in this function)
+	namespace := ""
+	if config.NamespaceInState {
+		inputURI, err := url.Parse(redirectURI)
+		if err != nil {
+			return resp, nil
+		}
+		qParam := inputURI.Query()
+		namespace = qParam.Get("namespace")
+		if len(namespace) > 0 {
+			qParam.Del("namespace")
+			inputURI.RawQuery = qParam.Encode()
+			redirectURI = inputURI.String()
+		}
 	}
 
 	if !validRedirect(redirectURI, role.AllowedRedirectURIs) {
@@ -647,6 +659,16 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 		RedirectURL:  redirectURI,
 		Endpoint:     provider.Endpoint(),
 		Scopes:       scopes,
+	}
+
+	stateID, nonce, err := b.createState(roleName, redirectURI, clientNonce)
+	if err != nil {
+		logger.Warn("error generating OAuth state", "error", err)
+		return resp, nil
+	}
+	if config.NamespaceInState && len(namespace) > 0 {
+		// embed namespace in state in the auth_url
+		stateID = fmt.Sprintf("%s,ns=%s", stateID, namespace)
 	}
 
 	authCodeOpts := []oauth2.AuthCodeOption{
