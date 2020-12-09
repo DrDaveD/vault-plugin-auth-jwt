@@ -355,9 +355,13 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 		return loginFailedResponse(useHttp, fmt.Sprintf("error validating claims: %s", err.Error())), nil
 	}
 
-	alias, groupAliases, err := b.createIdentity(allClaims, role)
+	alias, groupAliases, err := b.createIdentity(ctx, allClaims, role)
 	if err != nil {
 		return loginFailedResponse(useHttp, err.Error()), nil
+	}
+
+	if err := validateBoundClaims(b.Logger(), role.BoundClaimsType, role.BoundClaims, allClaims); err != nil {
+		return logical.ErrorResponse("error validating claims: %s", err.Error()), nil
 	}
 
 	tokenMetadata := map[string]string{"role": roleName}
