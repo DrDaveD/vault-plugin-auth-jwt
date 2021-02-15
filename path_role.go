@@ -7,13 +7,12 @@ import (
 	"strings"
 	"time"
 
-	"gopkg.in/square/go-jose.v2/jwt"
-
 	"github.com/hashicorp/go-sockaddr"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/strutil"
 	"github.com/hashicorp/vault/sdk/helper/tokenutil"
 	"github.com/hashicorp/vault/sdk/logical"
+	"gopkg.in/square/go-jose.v2/jwt"
 )
 
 var reservedMetadata = []string{"role"}
@@ -148,6 +147,11 @@ Defaults to 60 (1 minute) if set to 0 and can be disabled if set to -1.`,
 Not recommended in production since sensitive information may be present 
 in OIDC responses.`,
 			},
+			"max_age": {
+				Type: framework.TypeDurationSecond,
+				Description: `Specifies the allowable elapsed time in seconds since the last time the 
+user was actively authenticated.`,
+			},
 		},
 		ExistenceCheck: b.pathRoleExistenceCheck,
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -207,6 +211,7 @@ type jwtRole struct {
 	OIDCScopes          []string               `json:"oidc_scopes"`
 	AllowedRedirectURIs []string               `json:"allowed_redirect_uris"`
 	VerboseOIDCLogging  bool                   `json:"verbose_oidc_logging"`
+	MaxAge              time.Duration          `json:"max_age"`
 
 	// Deprecated by TokenParams
 	Policies   []string                      `json:"policies"`
@@ -314,6 +319,7 @@ func (b *jwtAuthBackend) pathRoleRead(ctx context.Context, req *logical.Request,
 		"allowed_redirect_uris": role.AllowedRedirectURIs,
 		"oidc_scopes":           role.OIDCScopes,
 		"verbose_oidc_logging":  role.VerboseOIDCLogging,
+		"max_age":               int64(role.MaxAge.Seconds()),
 	}
 
 	role.PopulateTokenData(d)
@@ -445,6 +451,10 @@ func (b *jwtAuthBackend) pathRoleCreateUpdate(ctx context.Context, req *logical.
 
 	if verboseOIDCLoggingRaw, ok := data.GetOk("verbose_oidc_logging"); ok {
 		role.VerboseOIDCLogging = verboseOIDCLoggingRaw.(bool)
+	}
+
+	if maxAgeRaw, ok := data.GetOk("max_age"); ok {
+		role.MaxAge = time.Duration(maxAgeRaw.(int)) * time.Second
 	}
 
 	boundClaimsType := data.Get("bound_claims_type").(string)

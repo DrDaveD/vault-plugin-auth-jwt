@@ -16,9 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/cap/oidc"
 	"github.com/hashicorp/go-sockaddr"
-
 	"github.com/hashicorp/vault/sdk/logical"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/square/go-jose.v2"
 	"gopkg.in/square/go-jose.v2/jwt"
 )
@@ -95,8 +97,8 @@ func TestOIDC_AuthURL(t *testing.T) {
 				`client_id=abc`,
 				`https://team-vault\.auth0\.com/authorize`,
 				`scope=openid`,
-				`nonce=\w{27}`,
-				`state=\w{27}`,
+				`nonce=n_\w{20}`,
+				`state=st_\w{20}`,
 				`redirect_uri=https%3A%2F%2Fexample.com`,
 				`response_type=code`,
 				`scope=openid`,
@@ -224,14 +226,14 @@ func TestOIDC_AuthURL_namespace(t *testing.T) {
 			namespaceInState:    "false",
 			allowedRedirectURIs: []string{"https://example.com?namespace=test"},
 			incomingRedirectURI: "https://example.com?namespace=test",
-			expectedStateRegEx:  `\w{27}`,
+			expectedStateRegEx:  `st_\w{20}`,
 			expectedRedirectURI: `https://example.com?namespace=test`,
 		},
 		"namespace as query parameter, bad allowed redirect": {
 			namespaceInState:    "false",
 			allowedRedirectURIs: []string{"https://example.com"},
 			incomingRedirectURI: "https://example.com?namespace=test",
-			expectedStateRegEx:  `\w{27}`,
+			expectedStateRegEx:  `st_\w{20}`,
 			expectedRedirectURI: `https://example.com?namespace=test`,
 			expectFail:          true,
 		},
@@ -239,7 +241,7 @@ func TestOIDC_AuthURL_namespace(t *testing.T) {
 			namespaceInState:    "true",
 			allowedRedirectURIs: []string{"https://example.com"},
 			incomingRedirectURI: "https://example.com?namespace=test",
-			expectedStateRegEx:  `\w{27},ns=test`,
+			expectedStateRegEx:  `st_\w{20},ns=test`,
 			expectedRedirectURI: `https://example.com`,
 		},
 		"namespace in state, bad allowed redirect": {
@@ -252,21 +254,21 @@ func TestOIDC_AuthURL_namespace(t *testing.T) {
 			namespaceInState:    "true",
 			allowedRedirectURIs: []string{"https://example.com"},
 			incomingRedirectURI: "https://example.com?namespace=org4321/dev",
-			expectedStateRegEx:  `\w{27},ns=org4321/dev`,
+			expectedStateRegEx:  `st_\w{20},ns=org4321/dev`,
 			expectedRedirectURI: `https://example.com`,
 		},
 		"namespace as query parameter, no namespaces": {
 			namespaceInState:    "false",
 			allowedRedirectURIs: []string{"https://example.com"},
 			incomingRedirectURI: "https://example.com",
-			expectedStateRegEx:  `\w{27}`,
+			expectedStateRegEx:  `st_\w{20}`,
 			expectedRedirectURI: `https://example.com`,
 		},
 		"namespace in state, no namespaces": {
 			namespaceInState:    "true",
 			allowedRedirectURIs: []string{"https://example.com"},
 			incomingRedirectURI: "https://example.com",
-			expectedStateRegEx:  `\w{27}`,
+			expectedStateRegEx:  `st_\w{20}`,
 			expectedRedirectURI: `https://example.com`,
 		},
 	}
@@ -361,6 +363,106 @@ func TestOIDC_AuthURL_namespace(t *testing.T) {
 				t.Fatalf("expected state to match regex: %s, %s", test.expectedStateRegEx, state)
 			}
 
+		})
+	}
+}
+
+func TestOIDC_AuthURL_max_age(t *testing.T) {
+	b, storage := getBackend(t)
+
+	// Configure the backend
+	req := &logical.Request{
+		Operation: logical.UpdateOperation,
+		Path:      configPath,
+		Storage:   storage,
+		Data: map[string]interface{}{
+			"oidc_discovery_url": "https://team-vault.auth0.com/",
+			"oidc_client_id":     "abc",
+			"oidc_client_secret": "def",
+		},
+	}
+	resp, err := b.HandleRequest(context.Background(), req)
+	require.NoError(t, err)
+	require.False(t, resp.IsError())
+
+	tests := map[string]struct {
+		maxAge         string
+		expectedMaxAge string
+		expectErr      bool
+	}{
+		"auth URL for role with integer max_age of 60": {
+			maxAge:         "60",
+			expectedMaxAge: "60",
+		},
+		"auth URL for role with integer max_age of 180": {
+			maxAge:         "180",
+			expectedMaxAge: "180",
+		},
+		"auth URL for role with empty max_age": {
+			maxAge:         "",
+			expectedMaxAge: "",
+		},
+		"auth URL for role with duration string max_age of 30s": {
+			maxAge:         "30s",
+			expectedMaxAge: "30",
+		},
+		"auth URL for role with duration string max_age of 2m": {
+			maxAge:         "2m",
+			expectedMaxAge: "120",
+		},
+		"auth URL for role with duration string max_age of 1hr": {
+			maxAge:         "1h",
+			expectedMaxAge: "3600",
+		},
+		"auth URL for role with invalid duration string": {
+			maxAge:    "1hr",
+			expectErr: true,
+		},
+		"auth URL for role with invalid signed integer": {
+			maxAge:    "-1",
+			expectErr: true,
+		},
+	}
+	for name, tt := range tests {
+		t.Run(name, func(t *testing.T) {
+			// Write the role with the given max age
+			req = &logical.Request{
+				Operation: logical.CreateOperation,
+				Path:      "role/test",
+				Storage:   storage,
+				Data: map[string]interface{}{
+					"user_claim":            "email",
+					"allowed_redirect_uris": []string{"https://example.com"},
+					"max_age":               tt.maxAge,
+				},
+			}
+			resp, err = b.HandleRequest(context.Background(), req)
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.False(t, resp.IsError())
+
+			// Request for generation of an auth URL
+			req = &logical.Request{
+				Operation: logical.UpdateOperation,
+				Path:      "oidc/auth_url",
+				Storage:   storage,
+				Data: map[string]interface{}{
+					"role":         "test",
+					"redirect_uri": "https://example.com",
+				},
+			}
+			resp, err = b.HandleRequest(context.Background(), req)
+			require.NoError(t, err)
+			require.False(t, resp.IsError())
+
+			// Parse the auth URL and assert the expected max_age query parameter
+			parsedAuthURL, err := url.Parse(resp.Data["auth_url"].(string))
+			require.NoError(t, err)
+			queryParams := parsedAuthURL.Query()
+			assert.Equal(t, tt.expectedMaxAge, queryParams.Get("max_age"))
 		})
 	}
 }
@@ -847,7 +949,7 @@ func TestOIDC_Callback(t *testing.T) {
 			t.Fatal("nil response")
 		}
 
-		if !resp.IsError() || !strings.Contains(resp.Error().Error(), `error validating signature: oidc: expected audience "abc"`) {
+		if !resp.IsError() || !strings.Contains(resp.Error().Error(), oidc.ErrInvalidAuthorizedParty.Error()) {
 			t.Fatalf("expected invalid client_id error, got : %v", *resp)
 		}
 	})
@@ -1008,6 +1110,7 @@ func (o *oidcProvider) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/userinfo":
 		w.Write([]byte(`
 			{
+				"sub": "r3qXcK2bix9eFECzsU3Sbmh0K16fatW6@clients",
 				"color":"red",
 				"temperature":"76"
 			}`))
