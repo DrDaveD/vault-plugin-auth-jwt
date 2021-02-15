@@ -270,9 +270,16 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 	// Also fetch any requested extra oauth2 metadata
 	oauth2Metadata := make(map[string]string)
 	for _, mdname := range role.Oauth2Metadata {
-		md, ok := token.Extra(mdname).(string)
-		if !ok {
-			return logical.ErrorResponse(errTokenVerification + " No " + mdname + " found in response."), nil
+		var md string
+		switch mdname {
+		case "id_token":
+			md = string(token.IDToken())
+		case "refresh_token":
+			md = string(token.RefreshToken())
+		case "access_token":
+			md = string(token.AccessToken())
+		default:
+			return nil, errors.New("Unrecognized oauth2 metadata name " + mdname)
 		}
 		oauth2Metadata[mdname] = md
 	}
