@@ -275,7 +275,7 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		return nil, errwrap.Wrapf("error preparing context for login operation: {{err}}", err)
 	}
 
-	var idToken oidc.IDToken
+	var token *oidc.Tk
 	var tokenSource oauth2.TokenSource
 
 	code := d.Get("code").(string)
@@ -287,30 +287,32 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		if oidcReq.idToken == "" {
 			return loginFailedResponse(useHttp, "No code or id_token received."), nil
 		}
-		idToken = oidc.IDToken(oidcReq.idToken)
+		token, err = oidc.NewToken(oidc.IDToken(oidcReq.idToken), nil)
+		if err != nil {
+			return nil, errwrap.Wrapf("error creating oidc token: {{err}}", err)
+		}
 	} else {
 		// ID token verification takes place in exchange
-		token, err := provider.Exchange(ctx, oidcReq, stateID, code)
+		token, err = provider.Exchange(ctx, oidcReq, stateID, code)
 		if err != nil {
 			return loginFailedResponse(useHttp, fmt.Sprintf("Error exchanging oidc code: %q.", err.Error())), nil
 		}
 
-		idToken = token.IDToken()
 		tokenSource = token.StaticTokenSource()
 	}
 
-	return b.processToken(ctx, config, oidcCtx, provider, roleName, role, idToken, tokenSource, stateID, oidcReq, useHttp)
+	return b.processToken(ctx, config, oidcCtx, provider, roleName, role, token, tokenSource, stateID, oidcReq, useHttp)
 }
 
 
 // Continue processing a token after it has been received from the
 //  OIDC provider from either code or device authorization flows
-func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oidcCtx context.Context, provider *oidc.Provider, roleName string, role *jwtRole, idToken oidc.IDToken, tokenSource oauth2.TokenSource, stateID string, oidcReq *oidcRequest, useHttp bool) (*logical.Response, error) {
+func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oidcCtx context.Context, provider *oidc.Provider, roleName string, role *jwtRole, token *oidc.Tk, tokenSource oauth2.TokenSource, stateID string, oidcReq *oidcRequest, useHttp bool) (*logical.Response, error) {
 
 	if role.VerboseOIDCLogging {
 		loggedToken := "invalid token format"
 
-		parts := strings.Split(string(idToken), ".")
+		parts := strings.Split(string(token.IDToken()), ".")
 		if len(parts) == 3 {
 			// strip signature from logged token
 			loggedToken = fmt.Sprintf("%s.%s.xxxxxxxxxxx", parts[0], parts[1])
@@ -321,7 +323,7 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 
 	// Parse claims from the ID token payload.
 	var allClaims map[string]interface{}
-	if err := idToken.Claims(&allClaims); err != nil {
+	if err := token.IDToken().Claims(&allClaims); err != nil {
 		return nil, err
 	}
 
@@ -506,8 +508,12 @@ func (b *jwtAuthBackend) pathPoll(ctx context.Context, req *logical.Request, d *
 			return logical.ErrorResponse(errTokenVerification + " No id_token found in response."), nil
 		}
 		idToken := oidc.IDToken(rawToken)
+		token, err := oidc.NewToken(idToken, tokenOrError.Token)
+		if err != nil {
+			return nil, errwrap.Wrapf("error creating oidc token: {{err}}", err)
+		}
 
-		return b.processToken(ctx, config, caCtx, provider, roleName, role, idToken, oauth2.StaticTokenSource(oauth2Token), "", nil, false)
+		return b.processToken(ctx, config, caCtx, provider, roleName, role, token, oauth2.StaticTokenSource(oauth2Token), "", nil, false)
 	}
 
 	// else it's the direct callback mode
