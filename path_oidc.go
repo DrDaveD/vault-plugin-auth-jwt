@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/vault/sdk/helper/cidrutil"
 	"github.com/hashicorp/vault/sdk/helper/strutil"
 	"github.com/hashicorp/vault/sdk/logical"
+	"golang.org/x/oauth2"
 )
 
 const (
@@ -274,9 +275,15 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		if oidcReq.idToken == "" {
 			return loginFailedResponse(useHttp, "No code or id_token received."), nil
 		}
+
+		// Verify the ID token received from the authentication response.
 		rawToken = oidc.IDToken(oidcReq.idToken)
+		if _, err := provider.VerifyIDToken(ctx, rawToken, oidcReq); err != nil {
+			return logical.ErrorResponse("%s %s", errTokenVerification, err.Error()), nil
+		}
 	} else {
-		// ID token verification takes place in exchange
+		// Exchange the authorization code for an ID token and access token.
+		// ID token verification takes place in provider.Exchange.
 		token, err = provider.Exchange(ctx, oidcReq, stateID, code)
 		if err != nil {
 			return loginFailedResponse(useHttp, fmt.Sprintf("Error exchanging oidc code: %q.", err.Error())), nil
@@ -314,15 +321,25 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		return loginFailedResponse(useHttp, "sub claim does not match bound subject"), nil
 	}
 
+	// Set the token source for the access token if it's available. It will only
+	// be available for the authorization code flow (oidc_response_types=code).
+	// The access token will be used for fetching additional user and group info.
+	var tokenSource oauth2.TokenSource
+	if token != nil {
+		tokenSource = token.StaticTokenSource()
+	}
+
 	// If we have a token, attempt to fetch information from the /userinfo endpoint
 	// and merge it with the existing claims data. A failure to fetch additional information
 	// from this endpoint will not invalidate the authorization flow.
-	if err := provider.UserInfo(ctx, token.StaticTokenSource(), subject, &allClaims); err != nil {
-		logFunc := b.Logger().Warn
-		if strings.Contains(err.Error(), "user info endpoint is not supported") {
-			logFunc = b.Logger().Info
+	if tokenSource != nil {
+		if err := provider.UserInfo(ctx, tokenSource, subject, &allClaims); err != nil {
+			logFunc := b.Logger().Warn
+			if strings.Contains(err.Error(), "user info endpoint is not supported") {
+				logFunc = b.Logger().Info
+			}
+			logFunc("error reading /userinfo endpoint", "error", err)
 		}
-		logFunc("error reading /userinfo endpoint", "error", err)
 	}
 
 	if role.VerboseOIDCLogging {
@@ -333,13 +350,13 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		}
 	}
 
-	if err := validateBoundClaims(b.Logger(), role.BoundClaimsType, role.BoundClaims, allClaims); err != nil {
-		return loginFailedResponse(useHttp, fmt.Sprintf("error validating claims: %s", err.Error())), nil
-	}
-
-	alias, groupAliases, err := b.createIdentity(ctx, allClaims, role, token.StaticTokenSource())
+	alias, groupAliases, err := b.createIdentity(ctx, allClaims, role, tokenSource)
 	if err != nil {
 		return loginFailedResponse(useHttp, err.Error()), nil
+	}
+
+	if err := validateBoundClaims(b.Logger(), role.BoundClaimsType, role.BoundClaims, allClaims); err != nil {
+		return loginFailedResponse(useHttp, fmt.Sprintf("error validating claims: %s", err.Error())), nil
 	}
 
 	tokenMetadata := map[string]string{"role": roleName}
