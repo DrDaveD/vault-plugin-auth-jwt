@@ -550,13 +550,6 @@ func (b *jwtAuthBackend) pathRoleCreateUpdate(ctx context.Context, req *logical.
 		return logical.ErrorResponse("invalid 'callback_mode': %s", callbackMode), nil
 	}
 
-	if callbackMode == callbackModeDevice {
-		err = b.configDeviceAuthURL(ctx, req.Storage)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	if role.RoleType == "oidc" && len(role.AllowedRedirectURIs) == 0 {
 		return logical.ErrorResponse(
 			"'allowed_redirect_uris' must be set if 'role_type' is 'oidc' or unspecified."), nil

@@ -588,14 +588,26 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 		if err != nil {
 			return nil, err
 		}
+
+		// Discover the device url endpoint if not already known
+		// This adds it to the cached config
+		err = b.configDeviceAuthURL(ctx, req.Storage)
+		if err != nil {
+			return nil, err
+		}
+
+		// "openid" is a required scope for OpenID Connect flows
+		scopes := append([]string{"openid"}, role.OIDCScopes...)
+
 		values := url.Values {
 			"client_id": {config.OIDCClientID},
-			"scope":     {strings.Join(role.OIDCScopes, " ")},
+			"scope":     {strings.Join(scopes, " ")},
 		}
 		body, err := contactIssuer(caCtx, config.OIDCDeviceAuthURL, &values, false)
 		if err != nil {
 			return nil, errwrap.Wrapf("error authorizing device: {{err}}", err)
 		}
+
 		var deviceCode struct {
 			DeviceCode              string `json:"device_code"`
 			UserCode                string `json:"user_code"`
