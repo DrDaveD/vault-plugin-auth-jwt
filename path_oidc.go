@@ -289,7 +289,7 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		}
 
 		// Verify the ID token received from the authentication response.
-		rawToken = oidc.IDToken(oidcReq.idToken)
+		rawToken := oidc.IDToken(oidcReq.idToken)
 		if _, err := provider.VerifyIDToken(ctx, rawToken, oidcReq); err != nil {
 			return logical.ErrorResponse("%s %s", errTokenVerification, err.Error()), nil
 		}
@@ -352,15 +352,7 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 		return loginFailedResponse(useHttp, "sub claim does not match bound subject"), nil
 	}
 
-	// Set the token source for the access token if it's available. It will only
-	// be available for the authorization code flow (oidc_response_types=code).
-	// The access token will be used for fetching additional user and group info.
-	var tokenSource oauth2.TokenSource
-	if token != nil {
-		tokenSource = token.StaticTokenSource()
-	}
-
-	// If we have a token, attempt to fetch information from the /userinfo endpoint
+	// If we have a tokenSource, attempt to fetch information from the /userinfo endpoint
 	// and merge it with the existing claims data. A failure to fetch additional information
 	// from this endpoint will not invalidate the authorization flow.
 	if tokenSource != nil {
