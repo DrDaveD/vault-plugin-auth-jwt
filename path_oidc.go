@@ -296,7 +296,7 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		case "access_token":
 			md = string(token.AccessToken())
 		default:
-			return nil, errors.New("Unrecognized oauth2 metadata name " + mdname)
+			return logical.ErrorResponse(errLoginFailed + " Unrecognized oauth2 metadata name " + mdname), nil
 		}
 		oauth2Metadata[mdname] = md
 	}
