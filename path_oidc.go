@@ -287,12 +287,20 @@ func (b *jwtAuthBackend) pathCallback(ctx context.Context, req *logical.Request,
 		if oidcReq.idToken == "" {
 			return loginFailedResponse(useHttp, "No code or id_token received."), nil
 		}
-		token, err = oidc.NewToken(oidc.IDToken(oidcReq.idToken), nil)
+
+		// Verify the ID token received from the authentication response.
+		rawToken = oidc.IDToken(oidcReq.idToken)
+		if _, err := provider.VerifyIDToken(ctx, rawToken, oidcReq); err != nil {
+			return logical.ErrorResponse("%s %s", errTokenVerification, err.Error()), nil
+		}
+
+		token, err = oidc.NewToken(rawToken, nil)
 		if err != nil {
 			return nil, errwrap.Wrapf("error creating oidc token: {{err}}", err)
 		}
 	} else {
-		// ID token verification takes place in exchange
+		// Exchange the authorization code for an ID token and access token.
+		// ID token verification takes place in provider.Exchange.
 		token, err = provider.Exchange(ctx, oidcReq, stateID, code)
 		if err != nil {
 			return loginFailedResponse(useHttp, fmt.Sprintf("Error exchanging oidc code: %q.", err.Error())), nil
@@ -344,7 +352,15 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 		return loginFailedResponse(useHttp, "sub claim does not match bound subject"), nil
 	}
 
-	// If we have a tokenSource, attempt to fetch information from the /userinfo endpoint
+	// Set the token source for the access token if it's available. It will only
+	// be available for the authorization code flow (oidc_response_types=code).
+	// The access token will be used for fetching additional user and group info.
+	var tokenSource oauth2.TokenSource
+	if token != nil {
+		tokenSource = token.StaticTokenSource()
+	}
+
+	// If we have a token, attempt to fetch information from the /userinfo endpoint
 	// and merge it with the existing claims data. A failure to fetch additional information
 	// from this endpoint will not invalidate the authorization flow.
 	if tokenSource != nil {
@@ -365,13 +381,13 @@ func (b *jwtAuthBackend) processToken(ctx context.Context, config *jwtConfig, oi
 		}
 	}
 
-	if err := validateBoundClaims(b.Logger(), role.BoundClaimsType, role.BoundClaims, allClaims); err != nil {
-		return loginFailedResponse(useHttp, fmt.Sprintf("error validating claims: %s", err.Error())), nil
-	}
-
 	alias, groupAliases, err := b.createIdentity(ctx, allClaims, role, tokenSource)
 	if err != nil {
 		return loginFailedResponse(useHttp, err.Error()), nil
+	}
+
+	if err := validateBoundClaims(b.Logger(), role.BoundClaimsType, role.BoundClaims, allClaims); err != nil {
+		return loginFailedResponse(useHttp, fmt.Sprintf("error validating claims: %s", err.Error())), nil
 	}
 
 	tokenMetadata := map[string]string{"role": roleName}
