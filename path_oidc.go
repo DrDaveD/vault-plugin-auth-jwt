@@ -609,6 +609,7 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 
 		values := url.Values {
 			"client_id": {config.OIDCClientID},
+			"client_secret": {config.OIDCClientSecret},
 			"scope":     {strings.Join(scopes, " ")},
 		}
 		body, err := contactIssuer(caCtx, config.OIDCDeviceAuthURL, &values, false)
@@ -625,7 +626,7 @@ func (b *jwtAuthBackend) authURL(ctx context.Context, req *logical.Request, d *f
 		}
 		err = json.Unmarshal(body, &deviceCode)
 		if err != nil {
-			return nil, errwrap.Wrapf("error decoding issuer response to device auth: {{err}}", err)
+			return nil, fmt.Errorf("error decoding issuer response to device auth: %v; response: %v", err, string(body))
 		}
 		// currently hashicorp/cap/oidc.NewRequest requires
 		//  redirectURL to be non-empty so throw in place holder
